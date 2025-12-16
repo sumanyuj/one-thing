@@ -1,5 +1,11 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
+const MAX_TITLE_LENGTH = 80;
+const MAX_LOCATION_LENGTH = 80;
+const MAX_DURATION_INPUT_LENGTH = 32;
+const MAX_TIMER_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
+const MAX_EXTEND_MINUTES = 8 * 60; // 8h
+
 const steps = [
   {
     key: "title",
@@ -20,6 +26,14 @@ const steps = [
     hint: "Examples: 30m, 1h, 1h 30m",
   },
 ];
+
+function sanitizeUserText(input, maxLength) {
+  return input
+    .replace(/[\u0000-\u001F\u007F]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
 
 function parseDurationToMs(input) {
   const raw = input.trim().toLowerCase();
@@ -51,7 +65,9 @@ function parseDurationToMs(input) {
   }
 
   if (totalMinutes <= 0) return null;
-  return Math.round(totalMinutes * 60 * 1000);
+  const ms = Math.round(totalMinutes * 60 * 1000);
+  if (ms > MAX_TIMER_DURATION_MS) return null;
+  return ms;
 }
 
 function formatRemaining(ms) {
@@ -91,7 +107,7 @@ export default function App() {
   const [timerRunning, setTimerRunning] = useState(false);
   const [showCompletion, setShowCompletion] = useState(false);
   const [showExtend, setShowExtend] = useState(false);
-  const [extendMinutes, setExtendMinutes] = useState(5);
+  const [extendMinutes, setExtendMinutes] = useState("5");
   const [animateHourglass, setAnimateHourglass] = useState(false);
 
   const inputRef = useRef(null);
@@ -204,18 +220,24 @@ export default function App() {
 
   function handleSubmit(event) {
     event.preventDefault();
-    const value = inputValue.trim();
+    const step = steps[stepIndex];
+    const maxLen =
+      step.key === "duration"
+        ? MAX_DURATION_INPUT_LENGTH
+        : step.key === "title"
+          ? MAX_TITLE_LENGTH
+          : MAX_LOCATION_LENGTH;
+    const value = sanitizeUserText(inputValue, maxLen);
     if (!value) {
       setError("Please add something first.");
       return;
     }
     setError("");
 
-    const step = steps[stepIndex];
     if (step.key === "duration") {
       const parsedMs = parseDurationToMs(value);
       if (!parsedMs) {
-        setError("Try 30m, 1h, 1h 30m, or 90 minutes.");
+        setError("Try 30m, 1h, 1h 30m, or 90 minutes (max 24h).");
         return;
       }
       const nextTask = { ...task, durationMs: parsedMs };
@@ -253,19 +275,23 @@ export default function App() {
     setAnimateHourglass(false);
     setShowCompletion(false);
     setShowExtend(false);
-    setExtendMinutes(5);
+    setExtendMinutes("5");
     setIsFlipping(false);
   }
 
   function handleExtendClick() {
     setShowExtend(true);
-    setExtendMinutes(5);
+    setExtendMinutes("5");
   }
 
   function handleConfirmExtend() {
     const minutes = Number(extendMinutes);
     if (!Number.isFinite(minutes) || minutes <= 0) {
-      setExtendMinutes(5);
+      setExtendMinutes("5");
+      return;
+    }
+    if (minutes > MAX_EXTEND_MINUTES) {
+      setExtendMinutes(String(MAX_EXTEND_MINUTES));
       return;
     }
     const durationMs = minutes * 60 * 1000;
@@ -302,6 +328,15 @@ export default function App() {
                   type="text"
                   value={inputValue}
                   placeholder={currentStep.placeholder}
+                  maxLength={
+                    currentStep.key === "duration"
+                      ? MAX_DURATION_INPUT_LENGTH
+                      : currentStep.key === "title"
+                        ? MAX_TITLE_LENGTH
+                        : MAX_LOCATION_LENGTH
+                  }
+                  autoComplete="off"
+                  spellCheck={currentStep.key !== "duration"}
                   onChange={(event) => setInputValue(event.target.value)}
                 />
                 <span className="prompt__caret" aria-hidden="true">
@@ -427,6 +462,7 @@ export default function App() {
                           id="extend-input"
                           type="number"
                           min="1"
+                          max={MAX_EXTEND_MINUTES}
                           value={extendMinutes}
                           onChange={(event) => setExtendMinutes(event.target.value)}
                           onKeyDown={(event) => {
