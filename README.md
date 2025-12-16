@@ -1,6 +1,6 @@
 # one-thing
 
-A small React/Vite experience to capture your “One Thing”, set where and how long you’ll do it, then run a focused timer with an animated hourglass.
+A small React/Vite experience to capture your “One Thing”, set where and how long you’ll do it, then run a focused timer with an animated hourglass with sand particles!
 
 ## Getting started
 
