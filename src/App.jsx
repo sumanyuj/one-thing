@@ -100,6 +100,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [promptLive, setPromptLive] = useState(false);
   const [isFlipping, setIsFlipping] = useState(false);
+  const [alarmActive, setAlarmActive] = useState(false);
 
   const [task, setTask] = useState({ title: "", location: "", durationMs: 0 });
   const [timerDuration, setTimerDuration] = useState(0);
@@ -115,6 +116,11 @@ export default function App() {
   const endTimeRef = useRef(null);
   const rafRef = useRef(null);
   const flipTimeoutRef = useRef(null);
+  const hasCompletedRef = useRef(false);
+  const audioContextRef = useRef(null);
+  const alarmStopRef = useRef(null);
+  const alarmAutoStopTimeoutRef = useRef(null);
+  const taskRef = useRef(task);
 
   const baseId = useId().replace(/:/g, "");
   const hourglassClipId = `hg-clip-${baseId}`;
@@ -141,6 +147,10 @@ export default function App() {
   }, [view, promptLive, stepIndex]);
 
   useEffect(() => {
+    taskRef.current = task;
+  }, [task]);
+
+  useEffect(() => {
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
@@ -151,6 +161,10 @@ export default function App() {
       if (flipTimeoutRef.current) {
         clearTimeout(flipTimeoutRef.current);
       }
+      if (alarmStopRef.current) {
+        alarmStopRef.current();
+        alarmStopRef.current = null;
+      }
     };
   }, []);
 
@@ -160,7 +174,9 @@ export default function App() {
     const tick = () => {
       const remaining = Math.max(0, endTimeRef.current - Date.now());
       setTimerRemaining(remaining);
-      if (remaining <= 0) {
+      if (remaining <= 0 && !hasCompletedRef.current) {
+        hasCompletedRef.current = true;
+        onTimerComplete();
         setTimerRunning(false);
         setShowCompletion(true);
       }
@@ -205,6 +221,10 @@ export default function App() {
 
   function restartTimer(durationMs) {
     if (!durationMs) return;
+    stopAlarm();
+    hasCompletedRef.current = false;
+    maybeRequestNotificationPermission();
+    primeAudio();
     triggerFlip();
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
@@ -216,6 +236,126 @@ export default function App() {
     setTimerRunning(true);
     setShowCompletion(false);
     setShowExtend(false);
+  }
+
+  function getAudioContext() {
+    if (audioContextRef.current) return audioContextRef.current;
+    const AudioContextImpl = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextImpl) return null;
+    audioContextRef.current = new AudioContextImpl();
+    return audioContextRef.current;
+  }
+
+  function primeAudio() {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    if (typeof ctx.resume === "function") {
+      ctx.resume().catch(() => {});
+    }
+  }
+
+  function playAlarmForMs(totalMs) {
+    const ctx = getAudioContext();
+    if (!ctx) return () => {};
+
+    if (typeof ctx.resume === "function") {
+      ctx.resume().catch(() => {});
+    }
+
+    let stopped = false;
+    const endAt = ctx.currentTime + Math.max(0, totalMs) / 1000;
+
+    const beepOnce = () => {
+      if (stopped) return;
+      const now = ctx.currentTime;
+      if (now >= endAt) {
+        stop();
+        return;
+      }
+
+      const oscillator = ctx.createOscillator();
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(880, now);
+
+      const gain = ctx.createGain();
+      const peak = 0.18;
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(peak, now + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.22);
+
+      oscillator.onended = () => {
+        try {
+          oscillator.disconnect();
+          gain.disconnect();
+        } catch {}
+      };
+    };
+
+    const intervalId = window.setInterval(beepOnce, 650);
+    beepOnce();
+
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      window.clearInterval(intervalId);
+    };
+
+    return stop;
+  }
+
+  function stopAlarm() {
+    if (alarmAutoStopTimeoutRef.current) {
+      window.clearTimeout(alarmAutoStopTimeoutRef.current);
+      alarmAutoStopTimeoutRef.current = null;
+    }
+    if (alarmStopRef.current) {
+      alarmStopRef.current();
+      alarmStopRef.current = null;
+    }
+    setAlarmActive(false);
+  }
+
+  function startAlarm() {
+    stopAlarm();
+    setAlarmActive(true);
+    alarmStopRef.current = playAlarmForMs(10_000);
+    alarmAutoStopTimeoutRef.current = window.setTimeout(() => stopAlarm(), 10_500);
+  }
+
+  function maybeRequestNotificationPermission() {
+    if (!("Notification" in window)) return;
+    if (Notification.permission !== "default") return;
+    try {
+      const result = Notification.requestPermission();
+      if (result && typeof result.then === "function") {
+        result.catch(() => {});
+      }
+    } catch {}
+  }
+
+  function showTimerDoneNotification() {
+    if (!("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+    const currentTask = taskRef.current;
+    const body = currentTask?.title
+      ? `“${currentTask.title}” is done.`
+      : "Your timer is done.";
+    try {
+      new Notification("One Thing timer finished", {
+        body,
+        tag: "one-thing-timer",
+      });
+    } catch {}
+  }
+
+  function onTimerComplete() {
+    startAlarm();
+    showTimerDoneNotification();
   }
 
   function handleSubmit(event) {
@@ -252,6 +392,8 @@ export default function App() {
   }
 
   function handleFinish() {
+    stopAlarm();
+    hasCompletedRef.current = false;
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
@@ -280,11 +422,13 @@ export default function App() {
   }
 
   function handleExtendClick() {
+    stopAlarm();
     setShowExtend(true);
     setExtendMinutes("5");
   }
 
   function handleConfirmExtend() {
+    stopAlarm();
     const minutes = Number(extendMinutes);
     if (!Number.isFinite(minutes) || minutes <= 0) {
       setExtendMinutes("5");
@@ -453,6 +597,11 @@ export default function App() {
                     <button type="button" className="btn btn--ghost" onClick={handleExtendClick}>
                       Not yet, extend
                     </button>
+                    {alarmActive ? (
+                      <button type="button" className="btn btn--ghost" onClick={stopAlarm}>
+                        Stop sound
+                      </button>
+                    ) : null}
                   </div>
                   {showExtend ? (
                     <div className="extend">
