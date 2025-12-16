@@ -365,19 +365,11 @@ export default function App() {
                       fill={`url(#${sandGradientId})`}
                     />
                     <rect
-                      className="hourglass__sand-fill hourglass__sand-fill--bottom"
-                      x="0"
-                      y="130"
-                      width="200"
-                      height="130"
-                      fill={`url(#${sandGradientId})`}
-                    />
-                    <rect
                       className="hourglass__stream"
                       x="98"
                       y="124"
                       width="4"
-                      height="92"
+                      height="110"
                       rx="2"
                       fill={`url(#${streamGradientId})`}
                     />
@@ -385,6 +377,14 @@ export default function App() {
                     <circle className="hourglass__grain hourglass__grain--b" cx="100" cy="126" r="1.15" />
                     <circle className="hourglass__grain hourglass__grain--c" cx="100" cy="126" r="1.35" />
                     <circle className="hourglass__grain hourglass__grain--d" cx="100" cy="126" r="1.05" />
+                    <rect
+                      className="hourglass__sand-fill hourglass__sand-fill--bottom"
+                      x="0"
+                      y="130"
+                      width="200"
+                      height="130"
+                      fill={`url(#${sandGradientId})`}
+                    />
                   </g>
 
                   <rect className="hourglass__cap hourglass__cap--top" x="52" y="14" width="96" height="18" rx="9" />
