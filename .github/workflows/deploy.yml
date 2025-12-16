@@ -1,0 +1,111 @@
+name: Deploy to Namecheap (cPanel) via rsync
+
+on:
+  push:
+    branches: ["main"]
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+env:
+  DEPLOY_SUBDIR: one-thing
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: VITE_BASE="/${{ env.DEPLOY_SUBDIR }}/" npm run build
+
+      - name: Setup SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          cat > ~/.ssh/id_deploy <<'KEY'
+          ${{ secrets.CPANEL_SSH_KEY }}
+          KEY
+          chmod 600 ~/.ssh/id_deploy
+
+          cat > ~/.ssh/config <<EOF
+          Host cpanel
+            HostName ${{ secrets.CPANEL_HOST }}
+            User ${{ secrets.CPANEL_USER }}
+            Port ${{ secrets.CPANEL_PORT }}
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+            StrictHostKeyChecking accept-new
+            UserKnownHostsFile ~/.ssh/known_hosts
+          EOF
+          chmod 600 ~/.ssh/config
+
+
+      - name: Check SSH port is reachable
+        shell: bash
+        run: |
+          set -euo pipefail
+          HOST="${{ secrets.CPANEL_HOST }}"
+          PORT="${{ secrets.CPANEL_PORT }}"
+          echo "Checking TCP $PORT on $HOST..."
+          timeout 8 bash -c "cat < /dev/null > /dev/tcp/$HOST/$PORT" \
+            && echo "Port $PORT reachable" \
+            || (echo "Port $PORT NOT reachable" && exit 1)
+
+      - name: Test SSH login
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes cpanel 'echo "SSH OK on $(hostname -f) as $(whoami)"'
+
+      - name: Ensure rsync is available on the server
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes cpanel 'command -v rsync >/dev/null && rsync --version | head -n 1 || (echo "rsync not found on server" && exit 1)'
+
+      - name: Deploy (mirror) to public_html
+        shell: bash
+        run: |
+          set -euo pipefail
+          rsync -avz --delete \
+            --exclude "blog/" \
+            --exclude "cgi-bin/" \
+            --exclude "ssl-manager.php" \
+            -e "ssh" \
+            ./dist/ \
+            "cpanel:public_html/${{ env.DEPLOY_SUBDIR }}/"
+
+      - name: Deploy cgi-bin (mirror)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "./cgi-bin" ]; then
+            rsync -avz --delete -e "ssh" \
+              ./cgi-bin/ \
+              "cpanel:public_html/cgi-bin/"
+          fi
+
+      - name: Deploy ssl-manager.php
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "./ssl-manager.php" ]; then
+            rsync -avz -e "ssh" \
+              ./ssl-manager.php \
+              "cpanel:public_html/ssl-manager.php"
+          fi
